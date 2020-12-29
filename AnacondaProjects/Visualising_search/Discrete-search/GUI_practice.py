@@ -5,6 +5,7 @@ Created on Wed Dec 16 17:21:18 2020
 @author: owen
 """
 import queens_search_methods as qsm
+import discrete_search as ds
 import tkinter as tk
 
 
@@ -53,6 +54,9 @@ class Board():
         self.rows=rows
         
         self.reset()
+        self.hill_climber = ds.Hill_climber(state=self.nqueens_state.queen_list,
+                                            target_func=self.nqueens_state.evaluate_position,
+                                            states_generator=self.nqueens_state.one_step_iterator)
         
         # not sure if canvas should be stored or just passed to draw method
         self.canvas = canvas
@@ -61,22 +65,16 @@ class Board():
         self.width =self.canvas.winfo_width()
        
     def reset(self):
-        self.hill_climber = qsm.Hill_climber_8queens(self.rows,self.columns)
-        # initialise locations of queens
-        queen_dict = {(queen.row,queen.column) : queen for queen in self.hill_climber.queens}  
+        self.nqueens_state = qsm.NQueens_state(self.rows,self.columns)
+        queen_dict=self.nqueens_state.location_dict
         # initialise all squares
         self.squares={(i,j) : Square(i,j,queen_dict.get((i,j))) for i in range(self.rows) for j in range(self.columns)}
         # initialise scores for each queen
-        self.set_queen_scores()
+        self.nqueens_state.set_queen_scores()
         
         
         
-    def set_queen_scores(self):
-        for q1 in self.hill_climber.queens:
-            score=0
-            for q2 in self.hill_climber.queens:
-                score+=qsm.check_interaction(q1,q2)
-            q1.set_score(score)
+
         
 
     def make_next_move(self):

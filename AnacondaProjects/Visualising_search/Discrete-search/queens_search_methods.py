@@ -15,6 +15,7 @@ class Queen():
         self.column = column
     
     def set_score(self,score):
+        # used to set the number of queens being attacked by this object
         self.score=score
 
 
@@ -25,11 +26,15 @@ class Queen():
         
 class NQueens_state():
     
+    
     def __init__(self,rows,columns):
         self.row_list = np.random.choice(range(rows),size=columns)
         self.queen_list = [Queen(self.row_list[i], i) for i in range(columns)]
+        self.location_dict = {(queen.row,queen.column) : queen for queen in self.queen_list}
         self.rows=rows
         self.columns=columns
+    
+    
     
     def get_state_as_coords(self,queen_list=None):
         if not queen_list:
@@ -85,7 +90,15 @@ class NQueens_state():
         return 0
     
     
+    def set_queen_scores(self):
+        for q1 in self.queen_list:
+            score=0
+            for q2 in self.queen_list:
+                score+=self.is_attacking(q1,q2)
+            q1.set_score(score)
+    
     def evaluate_position(self,nqueens_state=None):
+        
         """
         
 
@@ -100,8 +113,9 @@ class NQueens_state():
             DESCRIPTION. total of all interactions between queens in nqueens_state
 
         """
-        return sum([self.is_attacking(queen1,queen2) for queen1 in nqueens_state.queen_list
-                    for queen2 in nqueens_state.queen_list])
+        
+        return sum([self.is_attacking(queen1,queen2) for queen1 in self.queen_list
+                    for queen2 in self.queen_list])
             
     
         
@@ -112,7 +126,7 @@ class NQueens_state():
 
 
 
-
+"""
 
 
 def check_interaction(q1, q2):
@@ -185,3 +199,5 @@ if __name__ == '__main__':
     h = Hill_climber_8queens()
 
     h.climb()
+
+"""

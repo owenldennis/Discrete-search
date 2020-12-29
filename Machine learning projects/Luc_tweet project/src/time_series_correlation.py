@@ -19,14 +19,12 @@ import time
 TEST_MATRIX =  [[0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1],
                 [0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]]               
 
+TEST_MATRIX1 = [[1,0,0,1,1,0,0,0,0,0,0,0,0,1,1],[1,1,0,0,0,0,0,1,0,0,0,1,0,0,1]]
+
 ROOT_DIR="C:/Users/owen/Machine learning projects/Luc_tweet project"
 RESULTS_DIR="{0}/Results" .format(ROOT_DIR)
 TEMP_DIR="{0}/Temp".format(ROOT_DIR)
-
-
-
-
-         
+       
 
 class pairwise_stats():
     """ Calculate parameters and z-scores based on Messager et al (2019) for two time series of the same length
@@ -35,30 +33,51 @@ class pairwise_stats():
     *   
     """
     
-    def __init__(self,ts1,ts2,population_ps=[None,None,{}],delta=1,
-                 test=False,random_test=False,verbose=False):
+    def __init__(self,ts1,ts2,population_ps=[None,None,{}],delta=1,marks_dict={},
+                 test=False,random_test=False,verbose=False,progress={}):
+        if progress.get('one_percent_step'):
+            if not progress.get('step')%progress.get('one_percent_step'):
+                print(progress.get('step')/progress.get('one_percent_step'),end=",")
+            
         if test:
             self.verbose=True
             self.run_test(random_test=random_test)
+            self.dense=False
         else:
             self.ts1 = np.array(ts1)
             self.ts2 = np.array(ts2)
-            self.T = len(self.ts1)
             self.population_ps=population_ps
-            # if population probabilities are given, store - otherwise estimate from time series 
+            self.dense=population_ps[2].get('dense')
+            if self.dense:
+                self.T=self.population_ps[2].get('T')
+            else:
+                self.T = len(self.ts1)
+            # if population probabilities are given and are to be used, store - otherwise estimate from time series 
             if population_ps[0] and population_ps[2].get('Use population means'):
-                self.p1=population_ps[0]
-                self.p2=population_ps[1]
+                self.n1=population_ps[0]*self.T
+                self.n2=population_ps[1]*self.T
+            elif self.dense:
+                self.n1=len(self.ts1)
+                self.n2=len(self.ts2)                                   
             else:
                 self.n1=sum(self.ts1)
                 self.n2=sum(self.ts2)
-                self.p1 = self.n1/self.T
-                self.p2 = self.n2/self.T
+                
+            self.p1 = self.n1/self.T
+            self.p2 = self.n2/self.T
 
-            if not len(self.ts1)==len(self.ts2):
+            if not len(self.ts1)==len(self.ts2) and not self.dense:
                 print("Warning - lengths of time series do not match")
+                
             self.delta = delta
-            self.marks_dict = {0:np.dot(self.ts1,self.ts2)}
+            
+            if marks_dict.get(delta):
+                self.marks_dict=marks_dict 
+            elif self.dense:
+                self.marks_dict={}
+            else:
+                self.marks_dict = {0:np.dot(self.ts1,self.ts2)}
+                
             self.calculate_params()
             self.verbose=verbose
 
@@ -88,16 +107,15 @@ class pairwise_stats():
             stats = pd.concat([self.stats,stats]) 
         print(stats)
     
-    def count_marks_obsolete_slow_method(self):
-        self.marks = np.dot(self.ts1,self.ts2)
-        for shift in range(1,self.delta+1):
-            self.marks += np.dot(self.ts1[shift:],self.ts2[:-shift])
-            self.marks += np.dot(self.ts1[:-shift],self.ts2[shift:])
-        self.marks_dict[self.delta]=self.marks
-    
     def count_marks(self):
+        if self.dense:
+            self.count_marks_dense(self.delta)
+            return 0
+        m1=self.marks_dict.get(self.delta)
         m=self.marks_dict.get(self.delta-1)
-        if m:
+        if m1:
+            self.marks=m1 
+        elif m:
             self.marks = m+np.dot(self.ts1[self.delta:],self.ts2[:-self.delta]) + np.dot(self.ts1[:-self.delta],self.ts2[self.delta:])       
             self.marks_dict[self.delta] = self.marks
         else:
@@ -105,6 +123,15 @@ class pairwise_stats():
             for shift in range(1,self.delta+1):
                 self.marks += np.dot(self.ts1[shift:],self.ts2[:-shift])
                 self.marks += np.dot(self.ts1[:-shift],self.ts2[shift:])
+    
+    def count_marks_dense(self,max_delta,verbose=True):
+        if not max_delta or max_delta<self.delta:
+            max_delta=self.delta
+        marks=0
+        for t in self.ts1:
+            marks+=len(np.where(np.abs(self.ts2-t)<=max_delta)[0])
+        self.marks=marks
+            
     
     def calculate_params(self,verbose=False):
         self.count_marks()
@@ -157,79 +184,132 @@ class tweet_data():
     """
     * Objects of class tweet_data store multiple time series with default length 50 (must be constant)
     * Delta is the time lag window under which statistical comparison will be made
-    * method display_Z_vals uses class pairwise_stats to calculate z-values for each pair of time series and plots results in histogram
+    * method display_Z_vals uses class pairwise_stats to calculate z-values for pairs of time series and plots results in histogram
+    * if disjoint sets is True, rows (time series) are matched from one matrix (population) to the other.  
+    * Otherwise, only one population is used and all possible pairs are tested within it.
     * method test_delta analyses the sequences of z-values created by allowing delta to vary up to sqrt T for each pair of time series
-    * 
+    * If no axes are passed they are generated but this may not create good results
+    * Two axes should be passed in a list: the first will display a histogram of the proportions of 1s in all time series;
+    * the second will display a histogram of the z-scores for all correlations measured
     """
     
-    def __init__(self,tweet_matrix = [],number=12000,length = 50,population_ps = [None,None,{}],bernoulli=True,delta = 2,
-                disjoint_sets = False,test_delta = False,verbose=False,axes=None):
-        if not axes:
-            self.f,self.axes = plt.subplots(2,1)
-        else:
-            self.axes = axes
+    def __init__(self,tweet_matrices = [],population_ps = [None,None,{}],bernoulli=True,delta = 2,
+                disjoint_sets = False,test_delta = False,verbose=False,axes=[]):
+
+        self.start = time.time()
+        self.axes = axes
         self.population_ps = population_ps
-        if len(tweet_matrix):
-            self.tweet_matrix = tweet_matrix
-            self.T = len(self.tweet_matrix[0])
-            self.n = len(self.tweet_matrix)
+        self.verbose=verbose
+        self.disjoint_sets=disjoint_sets
+        self.dense=self.population_ps[2].get('dense')
+        self.T=self.population_ps[2].get('T')
+        self.n=self.population_ps[2].get('n')
+        self.ps=[[None for i in range(self.n)] for j in range(2)]
+        # if matrices are passed and are dense, length of each time series should have been passed in population_ps
+        # if not, it is inferred as the largest final entry across all time series
+        if len(tweet_matrices):
+            if self.dense:
+                if not self.T:
+                    self.T=max([ts[-1] for i in range(len(tweet_matrices)) for ts in tweet_matrices[i]])
+            else:
+                self.T = len(tweet_matrices[0][0])                
+            self.tweet_matrices = tweet_matrices
+            self.n = len(self.tweet_matrices[0])
+            if self.population_ps[2].get('Known probabilities array'):
+                self.ps = self.population_ps[2]['Known probabilities array']
+            elif self.population_ps[2].get('Use population means'):
+                print("*"*300)
+                print("WARNING - NO KNOWN PROBABILITIES SO CANNOT CALCULATE WITH FIXED MEANS.  CALCULATION WILL BE BASED ON INFERRED MEANS")
+                print("*"*300)
+            self.MARKS = [[None for i in range(self.n)] for j in range(self.n)]
         else:
             if verbose:
                 print("About to initialise tweet matrix")
-            self.T=length
-            self.n=number
-            if population_ps[2].get("random seed"):
-                seeds = np.random.choice(10*self.n,2*self.n)
-            else:
-                seeds = [None]*2*self.n
-       
-            self.initialise_arrays() 
+            self.MARKS = [[None for i in range(self.n)] for j in range(self.n)]
+            #if population_ps[2].get("random seed"):
+            #    seeds = np.random.choice(10*self.n,2*self.n)
+            #else:
+            #    seeds = [None]*2*self.n      
+            self.initialise_arrays()
             
-            print("Analysis of tweet matrix 1 : {0} time series length {1}".format(len(self.tweet_matrix),len(self.tweet_matrix[0])))
-            probs = np.sum([ts for ts in self.tweet_matrix],axis=1)/len(self.tweet_matrix[0])
-            self.axes[0].hist(probs,bins=100)
-            axes[0].set_title("Proportion of 1s in each time series")
-            print("Analysis of tweet matrix 2 : {0} time series length {1}".
-                      format(len(self.tweet_matrix1),len(self.tweet_matrix1[0])))
-            probs = np.sum([ts for ts in self.tweet_matrix1],axis=1)/len(self.tweet_matrix1[0])
-            self.axes[0].hist(probs,bins=100)                
+        if not len(self.axes):
+            f,self.axes=plt.subplots(1,len(self.tweet_matrices))
 
-        self.verbose=verbose
-        self.disjoint_sets=disjoint_sets
+
+        for i,m in enumerate(self.tweet_matrices):           
+            print("Analysis of tweet matrix {2}: {0} time series length {1}".format(len(m),self.T,i))
+            if not self.dense:
+                probs = [np.sum(ts)/self.T for ts in m]
+            else:
+                probs=[len(ts)/self.T for ts in m]
+            self.axes[0].hist(probs,bins=100)
+        self.axes[0].set_title("Proportion of 1s across all time series analysed")
+
         if test_delta:
             self.test_delta()               
         self.delta = delta
 
     def initialise_arrays(self):
-        ps=self.population_ps[:2]
         T=self.T
         n=self.n
-        if self.population_ps[2]['Use population means']:
-            p_arrays = [np.random.choice([0,1],p=[1-ps[i],ps[i]],size=[n,T]) for i in range(len(ps))]
+        if self.population_ps[2]['Use fixed means for setup']:
+            ps=self.population_ps[:2]
+            if self.verbose:
+                print("Initialising with fixed means {0}".format(ps))
+            split_time=time.time()
+        #    self.tweet_matrices = [np.random.choice([0,1],p=[1-p,p],size=[n,T]) for p in ps]
+            self.ps=[[p for i in range(n)] for p in ps]
+            self.tweet_matrices=[[np.random.choice(range(T),size=int(np.random.normal(T*p,np.sqrt(T*p*(1-p)))),replace=False) for i in range(n)] for p in ps]
+            if self.verbose:
+                print("Time to initialise : {0}".format(time.time()-split_time))
+
+            
         else:
-            ps=[np.random.chisquare(6)/30 for i in range(n)]
-            print("{0} larger than 1".format(len([p for p in ps if p>=1])))
-            ps=[p if p<1 else np.random.uniform(0.1,0.3) for p in ps]
-            p_arrays = [[np.random.choice([0,1],p=[1-ps[i],ps[i]],size=T) for i in range(len(ps))]for j in range(2)]
-        self.tweet_matrix=p_arrays[0]
-        self.tweet_matrix1=p_arrays[1]
-        
-    def display_Z_vals(self):
+            self.ps=[[np.random.chisquare(6)/30 for i in range(n)] for j in range(2)]
+            if self.verbose:
+                print("Initialising with randomly selected means from truncated chai squared distribution")
+            split_time=time.time()
+            self.ps=[[p if p<1 else np.random.uniform(0.1,0.3) for p in ps] for ps in self.ps]
+            self.tweet_matrices=[[np.random.choice(range(T),size=int(np.random.normal(T*p,np.sqrt(T*p*(1-p)))),replace=False) for p in ps] for ps in self.ps]
+            if self.verbose:
+                print("Time to initialise : {0}".format(time.time()-split_time))
+            #print(self.tweet_matrices)   
+
+                   
+    def display_Z_vals(self,ax=None):
+        self.tweet_matrix=self.tweet_matrices[0]
         if self.disjoint_sets:
-            self.results = np.array([pairwise_stats(ts1=self.tweet_matrix[i],ts2=self.tweet_matrix1[i],
-                                population_ps = self.population_ps, delta=self.delta,verbose=True).Z_score
+            self.tweet_matrix1=self.tweet_matrices[1]
+            if self.verbose:
+                print("Calculating z-scores for pairs from disjoint sets")
+                #print("Params being used are {0}".format(self.population_ps))
+                #print("Random selection of probabilities set are {0}".format(self.ps[np.random.randint(2)][np.random.randint(self.n)]))
+            split_time=time.time()
+            self.results = np.array([pairwise_stats(ts1=self.tweet_matrix[i],ts2=self.tweet_matrix1[i],delta=self.delta,progress={'step':i,'one_percent_step':int(self.n/100)},
+                                population_ps = [self.ps[0][i],self.ps[1][i],self.population_ps[2]], marks_dict={self.delta: self.MARKS[i][i]},verbose=True).Z_score
                                 for i in range(int(len(self.tweet_matrix)))])
+            if self.verbose:
+                print("Time to calculate : {0}".format(time.time()-split_time))
         else:
-            self.results = np.array([pairwise_stats(ts1=self.tweet_matrix[i],ts2=ts,delta=self.delta,
-                                population_ps = self.population_ps).Z_score
-                                for i in range(len(self.tweet_matrix)-1) for ts in self.tweet_matrix[i+1:] ])
+            self.tweet_matrix1=self.tweet_matrices[0]
+            self.ps=[self.ps[0],self.ps[0]]
+            if self.verbose:
+                print("calculating z-scores for all pairs from single matrix")
+            self.results = np.array([pairwise_stats(ts1=self.tweet_matrix[i],ts2=self.tweet_matrix[j],delta=self.delta,progress={'step':self.n*i+j+1,'one_percent_step':self.n*int(self.n/100+1)},
+                                marks_dict={self.delta: self.MARKS[i][j]},population_ps = [self.ps[0][i],self.ps[0][j],self.population_ps[2]]).Z_score
+                                for i in range(self.n-1) for j in range(i+1,self.n)])
+            if self.verbose:
+                print("Time to calulate : {0}".format(time.time()-split_time))
+                
         self.results = [r for r in self.results if r<np.inf]
-        self.axes[1].hist(self.results,bins = 200,label='{0}'.format(self.T))
+        if ax==None:
+            ax=self.axes[1]
+        ax.hist(self.results,bins = 200,label='{0}'.format(self.T))
         if self.population_ps[0] and self.population_ps[2].get("Use population means"):
             s = "Z-scores based on known population means."
         else:
             s="Z-scores based on individual estimates of means."
-        self.axes[1].set_title(s +  " Sample stats: mu={0:.2f},sigma={1:.2f}".format(np.mean(self.results),np.std(self.results)))
+        ax.set_title(s +  " Sample stats: mu={0:.2f},sigma={1:.2f}".format(np.mean(self.results),np.std(self.results)))
  
         print("Sample mean {0}, sample sigma {1}".format(np.mean(self.results),np.std(self.results)))
         print("Delta (max time-lag tested) is {0}".format(self.delta))
@@ -238,39 +318,59 @@ class tweet_data():
             rans = np.random.choice(len(self.tweet_matrix),2)
             print("Entries {0} and {1} selected from total of {2} time series".format(rans[0],rans[1],len(self.tweet_matrix)))
             ps = pairwise_stats(delta=self.delta,ts1=self.tweet_matrix[rans[0]],ts2=self.tweet_matrix1[rans[1]],
-                                population_ps = self.population_ps)
+                                population_ps = [self.ps[0][rans[0]],self.ps[1][rans[1]],self.population_ps[2]])
             ps.T=self.T
             ps.calculate_params(verbose=True)
-            if self.population_ps[2]:
+            if self.population_ps[2]['Use fixed means for setup']:
                 print("Probabilities of a particular entry in each time series is {0}".format(self.population_ps[0:2]))
             else:
                 print("Probabilities are taken from a chai-squared distribution with cut-off at 1")
         
     
-    def test_delta(self):
+    def test_delta(self,max_delta=None,delta_step=1,ax=None):
         # creates a series of z-values based on increasing lag windows for each pair of time series
         z_results = []
-        deltas=range(int(np.sqrt(self.T)))
-        for i in range(len(self.tweet_matrix)-1):
-            for j in range(i+1,len(self.tweet_matrix)):
-                ps = pairwise_stats(ts1 = self.tweet_matrix[i],ts2 = self.tweet_matrix[j],population_ps=self.population_ps)
+        if max_delta:
+            deltas = range(0,max_delta,delta_step)
+        else:
+            deltas=range(0,int(np.sqrt(self.T)),delta_step)
+        if self.disjoint_sets:
+            M=self.tweet_matrices[0]
+            N=self.tweet_matrices[1]            
+            for i in range(len(M)):
+                if not i%int(len(M)/100+1):
+                    print("{0}% complete".format(i*100/len(M)))
+                ps = pairwise_stats(ts1 = M[i],ts2 = N[i],population_ps=self.population_ps)
                 ps.calculate_z_series(deltas=deltas)
                 if not np.inf in ps.z_series:
-                    z_results.append(ps.z_series) 
+                    z_results.append(ps.z_series)
+        else:
+            M=self.tweet_matrices[0]
+            for i in range(len(M)-1):
+                if not i%int(len(M)/100+1):
+                    print("{0}% complete".format(i*100/len(M)))
+                for j in range(i+1,len(M)):
+                    ps = pairwise_stats(ts1 = M[i],ts2 = M[j],population_ps=self.population_ps)
+                    ps.calculate_z_series(deltas=deltas)
+                    if not np.inf in ps.z_series:
+                        z_results.append(ps.z_series) 
 
         ys = np.mean(z_results,axis=0)
         errs = np.std(z_results,axis=0)
-        self.axes[1].errorbar(deltas,ys,errs,alpha=0.5)
+        if ax==None:
+            ax=self.axes[1]
+        ax.set_title("Error bars for z-scores as delta increases")
+        ax.errorbar(deltas,ys,errs,alpha=0.5)
         if self.verbose:
-            print(self.tweet_matrix)
+            print(M)
             print(z_results)        
                                
     def display(self,head = True):
         if head:
-            print("Partial tweet matrix (10 rows,10 cols out of {0} by {1}):".format(len(self.tweet_matrix),len(self.tweet_matrix[0].array)))
-            print([self.tweet_matrix[i].array[:10] for i in range(10)])
+            print("Partial tweet matrix (10 rows,10 cols out of {0} by {1}):".format(len(self.tweet_matrices[0]),len(self.tweet_matrices[0][0].array)))
+            print([self.tweet_matrices[0][i].array[:10] for i in range(10)])
         else:
-            print(self.tweet_matrix)
+            print(self.tweet_matrices[0])
     
     def display_coeffs(self):
         print("Number of individuals: {0}".format(len(self.tweet_matrix)))
@@ -281,124 +381,63 @@ class tweet_data():
         plt.hist(corrs, bins = 200)            
 
 
-def test_sigma_with_inferred_means(number=100,xs=[100,200,300,400,500],params=[0.1,0.5,{}],disjoint=False,verbose=False,axes=[]):
-    """
-    *Compares z_scores when means are inferred/known
-    *Plot of sigma values for each against length of time series (given by parameter xs) is also shown
-    *Number of time series given by parameter number (either in one or both populations)
-    *If parameter disjoint is True, two separate populations are tested against each oterh pairwise
-    *If disjoint is False, only one population is tested but all possible pairings are formed
-    *If probs are None, individual probabilities are taken from a chai squared distribution
-    """
-    ts=[]
-    ys = [] # sigma values for z scores based on inferred means
-    zs =[] # mean values for z scores based on inferred means
-    y1s=[] # sigma values for z scores based on known population means
-    z1s=[] #sigma values for z scores based on known population means
-    if len(params[2].keys()):
-        params_dict = params[2]
-    else:
-        params_dict = {'Use population means' : False,
-                       'random seed' : None}
-    if params_dict['Use population means']:
-        pop1_prob = probs[0] # probability of a 1 at each time step for first population
-        pop2_prob = probs[1] # probability of a 1 at each time step for second population
-    else:
-        pop1_prob=None
-        pop2_prob=None
-
-    start_time = time.time()
-    for T in xs:
-        ts.append(T)        
-        print("T is {0}".format(T))
-        delta = int(np.sqrt(T))
-        if not len(axes):
-            f,axes = plt.subplots(2,2)
-            f.suptitle("Comparison of inferred v known population means for T = {0},delta = {1}".format(T,delta),fontsize=16)
-        for ax in axes[0]:
-            ax.plot([0,1],[0,0],'.',alpha=0.2)
-        for ax in axes[1]:
-            ax.plot([-2,2],[0,0],'.',alpha=0.2)
-            
-        params_dict['Use population means']=False
-        print("Running with inferred means.  Time elapsed: {0}".format(time.time()-start_time))
-        td = tweet_data(number = number,length = T,population_ps = [pop1_prob,pop2_prob,params_dict],delta = delta,
-                        disjoint_sets=disjoint,verbose=verbose,axes = [axes[0][0],axes[1][0]])
-        td.display_Z_vals()
-        ys.append(np.std(td.results))
-        zs.append(np.mean(td.results))
-        
-        params_dict['Use population means']=True
-        td.population_ps=[pop1_prob,pop2_prob,params_dict]
-        td.axes=[axes[0][1],axes[1][1]]
-        print("Running with population means. Time elapsed: {0}".format(time.time()-start_time))
-        #td = tweet_data(number = number,length = T,population_ps = [pop1_prob,pop2_prob,params_dict],delta = delta,disjoint_sets=disjoint,verbose=False,axes = [axes[0][1],axes[1][1]])
-        td.display_Z_vals()
-        y1s.append(np.std(td.results))
-        z1s.append(np.mean(td.results))
-        pd.DataFrame(np.transpose([ts,zs,ys,z1s,y1s])).to_csv("{0}/Accumulating results.csv".format(TEMP_DIR))
-    
-    axes[0][1].errorbar(xs,zs,ys,color='r',label='inferred')
-    axes[0][1].errorbar(xs,z1s,y1s,color='b',label='known')
-    axes[0][1].legend()
-    axes[1][0].legend()
-    axes[1][1].legend()
-    df=pd.concat([pd.DataFrame(xs,columns=['T']),
-                   pd.DataFrame(ys,columns=['Z score std dev (inferred means)']),
-                   pd.DataFrame(zs,columns=['Z score mean (inferred means)']),
-                   pd.DataFrame(y1s,columns=['Z score std dev (known means)']),
-                   pd.DataFrame(z1s,columns=['Z score mean (known means)'])],axis=1)
-    df.to_csv("{0}/Sigma_comparison{1}.csv".format(TEMP_DIR,str(xs)[:10]),mode='a')  
-    return df
-
-def test_delta():
-    params_dict = {'Use population means' : True,
-                       'random seed' : None}
-    pop1_prob = None
-    pop2_prob = None
-    disjoint=False
-    start_time = time.time()
-    number=10
-    T=100
-    delta=int(np.sqrt(T))
-    f,axes=plt.subplots(2,1)
-    f.suptitle("Comparison of inferred v known population means for T = {0},delta = {1}".format(T,delta),fontsize=16)
-        
-    td = tweet_data(number = number,length = T,population_ps = [pop1_prob,pop2_prob,params_dict],delta = delta,
-                        disjoint_sets=disjoint,verbose=False,axes=[axes[0],axes[1]])
-    td.test_delta()
       
 
 if __name__ == '__main__':
     TEST=False
-    number=10000
-    repeats = 0
-    xs=[10000,20000]
+    NEW_METHOD_TEST=False
+
+    number=1000
+    length=10000
     p1=0.2
-    p2=0.05
-    params_dict = {'Use population means' : False,
-                       'random seed' : None}
+    p2=0.1
+    params_dict = {'T' : length,
+                   'n' : number,
+                   'Use population means' : False,
+                   'Use fixed means for setup' : True,
+                       'random seed' : None,
+                   'Test_mode' : False,
+                   'dense' : True}
     if TEST:
         ps = pairwise_stats(test=True,random_test=False,delta=5)
-        #td = tweet_data(tweet_matrix = TEST_MATRIX,number=2,length=50,delta=5,verbose=True)
+
+    elif NEW_METHOD_TEST:
+        params_dict['T'] = 100
+        params_dict['n'] = 20
+        params_dict['Test_mode']=True
+        start=time.time()
+        #td = tweet_data(tweet_matrices = [TEST_MATRIX1,TEST_MATRIX1],number=2,length=50,delta=14,disjoint_sets=False,verbose=True)
+        td = tweet_data(population_ps=[p1,p2,params_dict],delta=int(np.sqrt(length)),disjoint_sets=False,verbose=True)
+        #td.calculate_marks(verbose=False)
+        print(time.time()-start)
+        td.test_delta()
+
     else:
-        df1=pd.DataFrame()
-        df1.to_csv("{0}/Sigma_comparison{1}.csv".format(TEMP_DIR,str(xs)[:10]),mode='w')
+        td = tweet_data(population_ps=[p1,p2,params_dict],delta=int(np.sqrt(length)),disjoint_sets=True,verbose=True)
+     
+    #print(td.ps)
+    #td.calculate_Z_vals(verbose=True)
+        start=time.time()
+    #print("Calculating marks")
+    #td.calculate_marks(verbose=False)
+    #t1=time.time()-start
+    #print("Time check: {0}".format(t1))
 
-        if repeats:
-            f,axes=plt.subplots(2,2)
-        else:
-            axes=[]
-        
-        for i in range(repeats+1):
-            df=test_sigma_with_inferred_means(number=number,xs=xs,params=[p1,p2,params_dict],disjoint=True,axes=axes,verbose=False)
-            df1=pd.concat([df1,df],axis=0)
+        print("Calculating z-values")
+        td.display_Z_vals()
+        t2=time.time()-start
+        print("Total time: {0}".format(t2))
+    
+    #td.MARKS = [[None for i in range(number)] for j in range(number)]
+    #print("Now calculating from scratch")
+    #start = time.time()
+    #td.display_Z_vals()
+    #t3=time.time()-start
+    #print("Time: {0}".format(t3))
+    #print(pd.DataFrame([t1,t2,t3],index=['Matrix method for marks','Total time using matrix method','Time using standard method']))
+    #
+      
 
-        df1.to_csv("{0}/Sigma_comparison{1}_repeated_runs_{2}_time series.csv".format(TEMP_DIR,i+1,number))
-        print("Means of each column of dataframe")
-        print(np.mean(df1))
-        print("Stdev of each column of dataframe")
-        print(np.std(df1))
 
 
 
