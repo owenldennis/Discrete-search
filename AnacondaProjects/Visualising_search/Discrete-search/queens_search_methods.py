@@ -19,7 +19,7 @@ class Queen():
         self.score=score
 
 
-    def print_info(self):
+    def print(self):
         print("Row {0}, Column {1}".format(self.row, self.column))
         
         
@@ -34,7 +34,10 @@ class NQueens_state():
         self.rows=rows
         self.columns=columns
     
-    
+    def reset_locations(self,queen_list):
+        self.queen_list=queen_list
+        self.location_dict = {(queen.row,queen.column) : queen for queen in self.queen_list}
+           
     
     def get_state_as_coords(self,queen_list=None):
         if not queen_list:
@@ -46,7 +49,7 @@ class NQueens_state():
         return [Queen(coords[0],coords[1]) for coords in coords_list]
     
     
-    def one_step_iterator(self,queen_list):
+    def one_step_iterator(self,queen_list=None):
         if not queen_list:
             queen_list=self.queen_list
         
@@ -97,15 +100,15 @@ class NQueens_state():
                 score+=self.is_attacking(q1,q2)
             q1.set_score(score)
     
-    def evaluate_position(self,nqueens_state=None):
+    def evaluate_position(self,queen_list=None):
         
         """
         
 
         Parameters
         ----------
-        nqueens_state : TYPE NQueens_state object
-            DESCRIPTION. state to be evaluated.  If not passed, current object is evaluated
+        nqueens_state : TYPE list of queen objects 
+            DESCRIPTION. state to be evaluated.  If not passed, current object state is evaluated
 
         Returns integer
         -------
@@ -113,9 +116,10 @@ class NQueens_state():
             DESCRIPTION. total of all interactions between queens in nqueens_state
 
         """
-        
-        return sum([self.is_attacking(queen1,queen2) for queen1 in self.queen_list
-                    for queen2 in self.queen_list])
+        if not queen_list:
+            queen_list=self.queen_list
+        return sum([self.is_attacking(queen1,queen2) for queen1 in queen_list
+                    for queen2 in queen_list])
             
     
         

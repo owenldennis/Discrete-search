@@ -52,6 +52,8 @@ class Board():
                 
         self.columns=columns
         self.rows=rows
+        self.total_moves=0
+        self.total_resets=-1
         
         self.reset()
         self.hill_climber = ds.Hill_climber(state=self.nqueens_state.queen_list,
@@ -65,33 +67,53 @@ class Board():
         self.width =self.canvas.winfo_width()
        
     def reset(self):
+        self.total_resets+=1
+        self.finished=False
+        self.local_maximum=False
         self.nqueens_state = qsm.NQueens_state(self.rows,self.columns)
+        self.reset_squares()
+
+    
+    def reset_squares(self):
         queen_dict=self.nqueens_state.location_dict
         # initialise all squares
         self.squares={(i,j) : Square(i,j,queen_dict.get((i,j))) for i in range(self.rows) for j in range(self.columns)}
         # initialise scores for each queen
         self.nqueens_state.set_queen_scores()
         
-        
-        
-
-        
 
     def make_next_move(self):
-        move,best=self.hill_climber.climb()
-        if move:
-            queen=move.queen
-            new_row=move.row
-            # update location of queen based on move passed from hill climber
-            self.squares[(queen.row,queen.column)].queen=None
-            self.squares[(new_row,queen.column)].queen=queen
-            self.move_string = "Queen on column {0} has moved to row {1}\nNew fitness is {2}\n".format(move.queen.column,move.row,best)       
-            move.queen.row=move.row
-            self.set_queen_scores()
+        
+        if not self.local_maximum:
+            self.total_moves+=1
+        #[q.print() for q in self.nqueens_state.queen_list]
+        #print("******")
+        queen_list,best=self.hill_climber.climb(self.nqueens_state.queen_list)
+        if queen_list:
+            #[q.print() for q in queen_list]
+            #print("*******")
+            # update location of queens based on move passed from hill climber
+            self.nqueens_state.reset_locations(queen_list)
+            self.reset_squares()
+            #self.move_string = "Queen on column {0} has moved to row {1}\nNew fitness is {2}\n".format(move.queen.column,move.row,best)       
+            self.move_string= "New fitness is {0}\n".format(best)
         else:
-            self.move_string="Unable to find a one-move improvement from this position\n"
+            if self.local_maximum:
+                self.move_string=""
+            else:
+                self.move_string="After {0} moves, score is {1} but now unable to find a one-move improvement from this position\n".format(self.total_moves,best)
+            self.local_maximum=True
+            if best==0:
+                if self.finished:
+                    self.move_string=""
+                else:
+                    self.move_string="SUCCESSFULLY FOUND A SOLUTION in {0} moves using {1} resets\n".format(self.total_moves,self.total_resets)
+                    self.finished=True
+            
         return self.move_string
-    
+
+        
+        
     def recentre_coords(self,coords,x_shift,y_shift):
         return [int(coords[0]+x_shift),int(coords[1]+y_shift),
                 int(coords[2]+x_shift),int(coords[3]+y_shift)]
@@ -134,8 +156,14 @@ class Application(tk.Frame):
         self.text_box.insert(tk.END,move_string)
         self.board.draw()
         
-    def run_to_summit(self):
-        pass
+    def climb_to_summit(self):
+        move_string="Starting"
+        while not move_string == "":
+            self.board_canvas.delete('all')
+            move_string=self.board.make_next_move()
+            if not " fitness is " in move_string:
+                self.text_box.insert(tk.END,move_string)
+        self.board.draw()            
     
     def reset_position(self):
         self.board.reset()
@@ -164,10 +192,15 @@ class Application(tk.Frame):
         self.reset_button['command'] = self.reset_position
         self.reset_button.pack(side =tk.LEFT)
         
+        self.find_solution = tk.Button(self.top_frame)
+        self.find_solution['text'] = 'Find solution'
+        self.find_solution['command'] = self.climb_to_summit
+        self.find_solution.pack(side=tk.LEFT)
+        
         
         self.board_canvas= tk.Canvas(self.board_frame,bg='blue')
         self.board_canvas.pack()
-        self.board=Board(self.board_canvas,rows=8,columns=8)
+        self.board=Board(self.board_canvas,rows=14,columns=12)
         self.board.draw()
         
         

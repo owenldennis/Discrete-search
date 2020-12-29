@@ -4,7 +4,7 @@ Created on Tue Dec 22 06:54:22 2020
 
 @author: owen
 """
-
+import copy
 
 class Hill_climber():
     """
@@ -22,7 +22,7 @@ class Hill_climber():
         self.states_generator=states_generator
         self.verbose=verbose
             
-    def climb(self):
+    def climb(self,state=None):
         """
         
 
@@ -38,13 +38,14 @@ class Hill_climber():
             DESCRIPTION. evaluation of the best state found in this step
 
         """
-        
-        best=self.target_func(self.state)
+        if not state:
+            state=self.state
+        best=self.target_func(state)
         next_state=None
-        for state in self.states_generator(self.state):
+        for state in self.states_generator(state):
                 score=self.target_func(state)
-                if score>best:
-                    next_state=state
+                if score<best:
+                    next_state=copy.deepcopy(state)
                     best=score
         
         return next_state,best
